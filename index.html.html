@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Magnum Steno Live Translator v3</title>
+<style>
+body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:0;background:#f5f5f7;color:#171717}
+main{max-width:1000px;margin:auto;padding:20px}
+h1{margin-bottom:4px}.sub{color:#666;margin-top:0}
+.card{background:white;border-radius:14px;padding:16px;margin:12px 0;box-shadow:0 1px 5px #0001}
+button{font-size:17px;padding:12px 17px;margin:4px;border:1px solid #bbb;border-radius:10px;background:white}
+.primary{background:#171717;color:white}
+#heard{font-size:22px;min-height:32px}
+#steno{font:700 clamp(28px,6vw,58px) Consolas,monospace;word-break:break-word;min-height:70px}
+#status{font-weight:700}
+.good{color:#18723a}.bad{color:#a33}
+textarea{width:100%;min-height:160px;box-sizing:border-box;font:14px Consolas,monospace}
+small{color:#666}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:7px;border-bottom:1px solid #eee}
+.unknown{background:#fff2b8;border-radius:5px;padding:0 3px}
+</style>
+</head>
+<body><main>
+<h1>Magnum Steno Live Translator</h1>
+<p class="sub">Version 3 • live English dictation → your approved steno dictionary</p>
+
+<div class="card">
+<button class="primary" id="start">🎙 Start Dictation</button>
+<button id="stop">Stop</button>
+<button id="clear">Clear</button>
+<p id="status">Ready</p>
+<p><small>Best in current Chrome or Edge. Allow microphone permission when asked. Internet may be required by the browser's speech-recognition service.</small></p>
+</div>
+
+<div class="card">
+<b>What the microphone heard</b>
+<div id="heard">—</div>
+</div>
+
+<div class="card">
+<b>Steno</b>
+<div id="steno">—</div>
+</div>
+
+<details class="card">
+<summary><b>Dictionary editor</b></summary>
+<p>One entry per line: <code>English | STENO | chapter</code>. Longer phrases automatically beat individual words.</p>
+<textarea id="editor"></textarea><br>
+<button id="load">Add / update entries</button>
+<button id="export">Export dictionary</button>
+<button id="reset">Reset added entries</button>
+<p id="count"></p>
+</details>
+
+<div class="card">
+<b>How matching works</b>
+<p>The translator always tries the longest matching phrase first. For example, if the dictionary contains <i>it does not</i>, it will use that phrase rather than translating <i>it</i>, <i>does</i>, and <i>not</i> separately. Unknown words remain visible in [brackets] so you immediately know what still needs to be added.</p>
+</div>
+
+<script>
+// Starter entries confirmed from the chapter material supplied by the student.
+// The editor is intentionally included so the dictionary can grow chapter by chapter.
+const BUILTIN = [
+["it does not","T*DZ","6"],
+["hurry","HUR","6"],
+["stopped","STOPD","6"],
+["started","STARTD","6"],
+["object","OB","6"],
+["objects","OBZ","6"],
+["observe","OEB","6"],
+["observed","OEB/-D","6"],
+["there are","THR-R","6"],
+["on the","OPB/-T","3/earlier"],
+["i","EU","earlier"],
+["you","U","earlier"],
+["say","-S","5"],
+["said","-SD","5"],
+["he said","ESD","5"],
+["i said","EUSD","5"],
+["it said","T-SD","5"],
+["you said","USD","5"],
+["race","RAEUS","5"],
+["raise","RAEUZ","5"],
+["raises","RAEUSZ","5"],
+["races","RA*EUSZ","5"],
+["raised","RAEUSD","5"],
+["raced","RA*EUSD","5"],
+["read","RED","5"],
+["red","R*ED","5"],
+["rid","REUD","5"],
+["rip","REUP","5"],
+["ripped","REUPD","5"],
+["rips","REUPZ","5"],
+["roll","ROL","5"],
+["rolled","ROLD","5"],
+["rolls","ROLZ","5"],
+["cross","KROS","5"],
+["crosses","KROSZ","5"],
+["crossed","KROSD","5"],
+["press","PRES","5"],
+["presses","PRESZ","5"],
+["pressed","PRESD","5"],
+["stress","STRES","5"],
+["stresses","STRESZ","5"],
+["stressed","STRESD","5"],
+["trade","TRAEUD","5"],
+["trades","TRAEUDZ","5"],
+["traded","TRAEUTD","5"],
+["trader","TRAEURD","5"],
+["trait","TRAEUT","5"],
+["traits","TRAEUTS","5"],
+["traitor","TRAEURT","5"],
+["traitors","TRAEURTS","5"],
+["can it be","K*BT","6"]
+];
+
+const KEY="magnum_steno_v3_entries";
+let extra=JSON.parse(localStorage.getItem(KEY)||"[]");
+let dict=[];
+
+function norm(s){
+ return s.toLowerCase().replace(/[“”"'?!.,;:()[\]{}]/g,"").replace(/\s+/g," ").trim();
+}
+function rebuild(){
+ const map=new Map();
+ [...BUILTIN,...extra].forEach(e=>map.set(norm(e[0]),e));
+ dict=[...map.values()].sort((a,b)=>norm(b[0]).split(" ").length-norm(a[0]).split(" ").length);
+ document.getElementById("count").textContent=`${dict.length} dictionary entries loaded.`;
+}
+rebuild();
+
+function translate(text){
+ const words=norm(text).split(" ").filter(Boolean);
+ let out=[], i=0;
+ while(i<words.length){
+   let hit=null, n=0;
+   for(const e of dict){
+     const p=norm(e[0]).split(" ");
+     if(p.length<=n) continue;
+     if(words.slice(i,i+p.length).join(" ")===p.join(" ")){hit=e;n=p.length;}
+   }
+   if(hit){out.push(hit[1]);i+=n;}
+   else {out.push("["+words[i]+"]");i++;}
+ }
+ return out.join(" / ");
+}
+
+const heard=document.getElementById("heard"), steno=document.getElementById("steno"), status=document.getElementById("status");
+let Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+let rec=null, running=false, committed="";
+
+if(Recognition){
+ rec=new Recognition();
+ rec.continuous=true; rec.interimResults=true; rec.lang="en-US";
+ rec.onstart=()=>{running=true;status.textContent="Listening…";status.className="good";}
+ rec.onerror=e=>{status.textContent="Microphone/speech error: "+e.error;status.className="bad";}
+ rec.onend=()=>{if(running){try{rec.start()}catch(e){}}else{status.textContent="Stopped";status.className="";}}
+ rec.onresult=e=>{
+   let interim="";
+   for(let i=e.resultIndex;i<e.results.length;i++){
+     const t=e.results[i][0].transcript;
+     if(e.results[i].isFinal) committed += " "+t; else interim += " "+t;
+   }
+   const all=(committed+" "+interim).trim();
+   heard.textContent=all||"—";
+   steno.textContent=all?translate(all):"—";
+ };
+}else{
+ status.textContent="Live speech recognition is not supported in this browser. Try current Chrome or Edge.";
+ status.className="bad";
+}
+
+document.getElementById("start").onclick=()=>{if(!rec)return;running=true;try{rec.start()}catch(e){}};
+document.getElementById("stop").onclick=()=>{running=false;if(rec)rec.stop();};
+document.getElementById("clear").onclick=()=>{committed="";heard.textContent="—";steno.textContent="—";};
+
+document.getElementById("load").onclick=()=>{
+ const lines=document.getElementById("editor").value.split(/\n/).map(x=>x.trim()).filter(Boolean);
+ for(const line of lines){
+   const p=line.split("|").map(x=>x.trim());
+   if(p.length>=2 && p[0] && p[1]) extra.push([p[0],p[1],p[2]||""]);
+ }
+ localStorage.setItem(KEY,JSON.stringify(extra)); rebuild();
+ document.getElementById("editor").value="";
+ alert("Entries loaded.");
+};
+document.getElementById("reset").onclick=()=>{
+ if(confirm("Remove all entries you added in this browser?")){
+   extra=[];localStorage.removeItem(KEY);rebuild();
+ }
+};
+document.getElementById("export").onclick=()=>{
+ const blob=new Blob([JSON.stringify({builtin:BUILTIN,added:extra},null,2)],{type:"application/json"});
+ const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="magnum_steno_dictionary_backup.json";a.click();
+ setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+};
+</script>
+</main></body></html>
